@@ -18,27 +18,36 @@ def to_jsonable(obj: Any) -> Any:
     return obj
 
 
-def _render_table(data: Any) -> str:
+def _cell(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _render_table(data: Any, columns: list[str] | None = None) -> str:
     data = to_jsonable(data)
     if isinstance(data, list):
         if not data:
             return "(no results)"
-        cols = list({k: None for row in data for k in (row if isinstance(row, dict) else {})})
-        widths = {c: max(len(c), *(len(str(r.get(c, ""))) for r in data)) for c in cols}
+        if columns and all(isinstance(row, dict) for row in data):
+            cols = list(columns)
+        else:
+            cols = list({k: None for row in data for k in (row if isinstance(row, dict) else {})})
+        widths = {c: max(len(c), *(len(_cell(r.get(c))) for r in data)) for c in cols}
         header = "  ".join(c.ljust(widths[c]) for c in cols)
-        rows = ["  ".join(str(r.get(c, "")).ljust(widths[c]) for c in cols) for r in data]
+        rows = ["  ".join(_cell(r.get(c)).ljust(widths[c]) for c in cols) for r in data]
         return "\n".join([header, *rows])
     if isinstance(data, dict):
         w = max((len(k) for k in data), default=0)
-        return "\n".join(f"{k.ljust(w)}  {v}" for k, v in data.items())
+        return "\n".join(f"{k.ljust(w)}  {_cell(v)}" for k, v in data.items())
     return str(data)
 
 
-def emit(fmt: str, data: Any) -> None:
+def emit(fmt: str, data: Any, columns: list[str] | None = None) -> None:
+    """Print ``data``. ``columns`` selects which fields show in TABLE mode only;
+    JSON always emits the full object."""
     if fmt == "json":
         print(json.dumps(to_jsonable(data), indent=2))
     else:
-        print(_render_table(data))
+        print(_render_table(data, columns))
 
 
 def print_error(fmt: str, message: str) -> None:

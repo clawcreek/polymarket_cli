@@ -8,6 +8,9 @@ from ..pagination import collect
 
 app = typer.Typer(no_args_is_help=True, help="Find markets by keyword, slug, or id.")
 
+# Readable table columns; `-o json` still returns token ids + condition id.
+MARKET_COLUMNS = ["question", "yes_price", "slug"]
+
 
 def _market_row(market) -> dict:
     """Flatten a market to the fields you need to read or trade it."""
@@ -33,7 +36,7 @@ def search(ctx: typer.Context, query: str = typer.Argument(...), limit: int = 10
         for event in getattr(result, "events", None) or []:
             for market in getattr(event, "markets", None) or []:
                 rows.append(_market_row(market))
-    emit(ctx.obj.output, rows)
+    emit(ctx.obj.output, rows, columns=MARKET_COLUMNS)
 
 
 @app.command()
@@ -53,4 +56,4 @@ def get(ctx: typer.Context, ref: str = typer.Argument(..., help="Market id, slug
 def list_markets(ctx: typer.Context, limit: int = 20, closed: bool = typer.Option(False, "--closed/--active")) -> None:
     """List markets (open by default; --closed for resolved markets)."""
     page = _context.public(ctx).list_markets(closed=closed, page_size=limit)
-    emit(ctx.obj.output, [_market_row(m) for m in collect(page)])
+    emit(ctx.obj.output, [_market_row(m) for m in collect(page)], columns=MARKET_COLUMNS)

@@ -5,8 +5,7 @@ Set up a wallet, check your balances, search for markets by keyword, and place o
 as readable tables or `-o json` for scripts and agents.
 
 Built on the official **`polymarket-client`** SDK (`Polymarket/py-sdk`), which trades from the
-deterministic deposit wallet (signature type 3 / POLY_1271). See
-[`docs/superpowers/specs/`](docs/superpowers/specs/) for the design.
+deterministic deposit wallet (signature type 3 / POLY_1271). 
 
 ---
 
@@ -52,7 +51,8 @@ poly data value                               # portfolio value
 
 ### ③ Find a market
 
-Search by keyword — the results include each market's **slug** and **token ids**, which you trade with:
+Search by keyword — the table shows each market's **slug** (which you trade with);
+full **token ids** and `condition_id` are available with `-o json`:
 
 ```bash
 poly markets search "world cup"               # keyword search
@@ -62,10 +62,11 @@ poly markets list --limit 20                  # browse open markets
 
 Example (`poly markets search "world cup"`):
 ```
-question                                     slug                       yes_price  yes_token_id   no_token_id
-Will Portugal reach the Round of 16?         will-portugal-reach-...     0.745      4636895...     49035830...
-Will Mexico reach the Round of 16?           will-mexico-reach-...       0.62       27577752...    22561127...
+question                                       yes_price  slug
+Will Portugal reach the Round of 16 ...        0.745      will-portugal-reach-the-round-of-16-...
+Will Mexico reach the Round of 16 ...          0.62       will-mexico-reach-the-round-of-16-...
 ```
+(Tables show a readable subset of columns; `-o json` returns every field.)
 
 ### ④ Trade
 

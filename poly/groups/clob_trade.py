@@ -17,6 +17,10 @@ from .. import trade
 # USDC collateral and outcome-token shares are both quoted in 6-decimal base units.
 BASE_UNIT_DECIMALS = 6
 
+# Readable table columns; `-o json` still returns every field.
+ORDER_COLUMNS = ["id", "side", "price", "original_size", "size_matched", "outcome", "status"]
+TRADE_COLUMNS = ["matched_at", "side", "outcome", "price", "size", "status"]
+
 app = typer.Typer(no_args_is_help=True, help="CLOB trading and account reads.")
 
 
@@ -141,7 +145,7 @@ def orders(ctx: typer.Context, market: str = typer.Option(None)) -> None:
     """List your open orders."""
     client = _context.secure(ctx)
     paginator = client.list_open_orders(market=market) if market else client.list_open_orders()
-    emit(_fmt(ctx), collect(paginator))
+    emit(_fmt(ctx), collect(paginator), columns=ORDER_COLUMNS)
 
 
 @app.command("order")
@@ -153,7 +157,7 @@ def order(ctx: typer.Context, order_id: str = typer.Argument(...)) -> None:
 @app.command("trades")
 def trades(ctx: typer.Context) -> None:
     """List your account trades."""
-    emit(_fmt(ctx), collect(_context.secure(ctx).list_account_trades()))
+    emit(_fmt(ctx), collect(_context.secure(ctx).list_account_trades()), columns=TRADE_COLUMNS)
 
 
 @app.command("balance")
