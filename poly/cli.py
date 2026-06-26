@@ -4,6 +4,7 @@ import typer
 from .context import CliContext
 from .groups import wallet
 from .groups import setup as setup_group
+from .groups import markets
 from .groups import clob_trade
 from .groups import data
 
@@ -12,6 +13,7 @@ _OUTPUT = {"fmt": "table"}  # mirrored for main()'s error envelope
 
 app.add_typer(wallet.app, name="wallet")
 app.command("setup")(setup_group.setup_cmd)
+app.add_typer(markets.app, name="markets")
 app.add_typer(clob_trade.app, name="clob")
 app.add_typer(data.app, name="data")
 
