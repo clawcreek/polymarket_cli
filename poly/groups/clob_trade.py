@@ -5,12 +5,17 @@ Note: update-balance was intentionally removed — it was a byte-for-byte duplic
 of balance. The SDK has no distinct "refresh balance" endpoint.
 """
 
+from decimal import Decimal
+
 import typer
 from .. import context as _context
 from ..output import emit
 from ..pagination import collect
-from ..orders import normalize_side, build_signed_limit_order, describe_response
+from ..orders import normalize_side, build_signed_limit_order, describe_response, decimal_str
 from .. import trade
+
+# USDC collateral and outcome-token shares are both quoted in 6-decimal base units.
+BASE_UNIT_DECIMALS = 6
 
 app = typer.Typer(no_args_is_help=True, help="CLOB trading and account reads.")
 
@@ -157,7 +162,14 @@ def balance(
     asset_type: str = typer.Option(..., "--asset-type", help="collateral or conditional"),
     token: str = typer.Option(None, "--token"),
 ) -> None:
-    """Show balance and allowance for an asset type."""
-    emit(_fmt(ctx), _context.secure(ctx).get_balance_allowance(
+    """Show your balance for an asset type, in human units (USDC / shares)."""
+    result = _context.secure(ctx).get_balance_allowance(
         asset_type=asset_type.upper(), token_id=token,
-    ))
+    )
+    raw = result["balance"] if isinstance(result, dict) else getattr(result, "balance", None)
+    human = decimal_str(Decimal(str(raw)) / Decimal(10**BASE_UNIT_DECIMALS)) if raw is not None else None
+    emit(_fmt(ctx), {
+        "asset_type": asset_type.upper(),
+        "balance": human,
+        "raw": str(raw) if raw is not None else None,
+    })

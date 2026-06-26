@@ -54,7 +54,7 @@ class FakeSecure:
         )
 
     def get_balance_allowance(self, *, asset_type, token_id=None):
-        return {"asset_type": asset_type, "balance": "100.0"}
+        return {"asset_type": asset_type, "balance": "47514085"}  # raw 6-decimal base units
 
     def cancel_all(self):
         self.cancel_all_called = True
@@ -99,11 +99,12 @@ def test_trades_lists_account_trades(monkeypatch):
     assert "t1" in result.output
 
 
-def test_balance_calls_get_balance_allowance(monkeypatch):
+def test_balance_converts_raw_to_human_units(monkeypatch):
     monkeypatch.setattr(context, "secure", lambda ctx: FakeSecure())
     result = runner.invoke(app, ["-o", "json", "clob", "balance", "--asset-type", "collateral"])
     assert result.exit_code == 0
     assert "COLLATERAL" in result.output
+    assert "47.514085" in result.output  # raw 47514085 -> human USDC
 
 
 def test_cancel_all_with_yes_flag(monkeypatch):
