@@ -1,137 +1,130 @@
 # poly
 
-A CLI for placing buy/sell orders on Polymarket from your deposit wallet, with group commands for reading positions and managing the local wallet.
+A friendly command-line tool for trading on **Polymarket** from your deposit wallet —
+place buy/sell orders, check balances, and view positions, with human tables or `--output json`
+for scripts and agents.
 
-Built on the official unified **`polymarket-client`** SDK (`Polymarket/py-sdk`) —
-*not* the legacy `py-clob-client-v2`, which cannot post orders from deposit wallets
-(signature type 3 / POLY_1271) and corrupts clean prices via float drift. See
-[`docs/superpowers/specs/2026-06-25-poly-cli-design.md`](docs/superpowers/specs/2026-06-25-poly-cli-design.md)
-for the full design and the list of SDK bugs this tool sidesteps.
+Built on the official **`polymarket-client`** SDK (`Polymarket/py-sdk`), which trades from the
+deterministic deposit wallet (signature type 3 / POLY_1271) — the path the legacy
+`py-clob-client-v2` could not. See [`docs/superpowers/specs/`](docs/superpowers/specs/) for the
+full design.
 
-## Setup
+---
 
-```bash
-uv sync --extra dev          # create .venv and install deps (SDK is a prerelease)
-```
-
-Key management uses a config file at `~/.config/polymarket/config.json` (not `.env`).
-Set up your signer key with the setup wizard:
+## Install
 
 ```bash
-uv run poly setup --private-key 0x...
-# or: uv run poly wallet import 0x...
-# or: set POLYMARKET_PRIVATE_KEY=0x... in the environment
+uv sync --extra dev
 ```
 
-**The project `.env` file is not read.** Key resolution order: `--private-key` flag > `POLYMARKET_PRIVATE_KEY` env > `~/.config/polymarket/config.json`.
+> Examples below use `poly`. If it isn't on your `PATH`, prefix with `uv run` (e.g. `uv run poly buy …`).
 
-## Command Structure
-
-```
-poly [OPTIONS] COMMAND [ARGS]...
-
-Global options:
-  -o, --output table|json    Output format (default: table)
-  --private-key TEXT         Override the signer key for this run
-  --wallet TEXT              Override the wallet address for this run
-
-Command groups:
-  setup       Configure your signer key
-  buy         Buy an outcome (alias for clob create-order / market-order)
-  sell        Sell an outcome
-  wallet      Manage the local key (create/import/show/address/reset)
-  clob        CLOB trading and account reads
-  data        On-chain portfolio data (positions, value)
-```
-
-Note: `--signature-type` was intentionally removed. The SDK derives the deposit wallet
-(type 3 / POLY_1271) deterministically from the private key; this path is not configurable.
-
-## Usage
+## Set your key (once)
 
 ```bash
-# Always dry-run first: builds + signs locally, prints the order, does NOT submit.
-uv run poly buy --token-id <TOKEN_ID> --usd 1 --price 0.50 --dry-run
-
-# Buy $1 of YES at a 0.50 limit. Asks you to type YES to confirm.
-uv run poly buy --slug <market-slug> --outcome yes --usd 1 --price 0.50
-
-# Sell 10 shares of NO at a 0.40 limit, skip confirmation prompt.
-uv run poly sell --slug <market-slug> --outcome no --size 10 --price 0.40 --yes
-
-# Trade a token id directly (e.g. copied from the site).
-uv run poly buy --token-id 1234567... --usd 2 --price 0.65
-
-# Market BUY: spends USD, capped so fees never push you past it.
-uv run poly buy --url https://polymarket.com/event/... --outcome yes --usd 2 --market
-
-# Market SELL: delivers shares.
-uv run poly sell --slug <market-slug> --outcome no --size 10 --market
-
-# View your open orders as JSON.
-uv run poly -o json clob orders
-
-# List positions for your wallet (resolved from config).
-uv run poly -o json data positions
-
-# List positions for any wallet address.
-uv run poly -o json data positions 0x93772c4c6332901F9F5e6c3F179D623b07D7BbB7
-
-# Show your configured wallet address.
-uv run poly wallet show
+poly setup                      # interactive — paste your key when prompted
+# or
+poly wallet import 0x<your-signer-key>
 ```
 
-### clob subcommands
+Your key is stored in `~/.config/polymarket/config.json` (file mode `600`). The deposit wallet is
+derived from it automatically. A project `.env` file is **not** read.
 
-| Command | Description |
+**Key resolution order:** `--private-key` flag → `POLYMARKET_PRIVATE_KEY` env → config file.
+
+## Quick start
+
+```bash
+# 1. Always dry-run first — builds and signs locally, prints the order, and never submits.
+poly buy --slug <market-slug> --outcome yes --usd 1 --price 0.50 --dry-run
+
+# 2. Place it for real — shows a preview and asks you to type YES.
+poly buy --slug <market-slug> --outcome yes --usd 1 --price 0.50
+
+# 3. Check what you hold.
+poly data positions
+poly clob balance --asset-type collateral
+```
+
+---
+
+## Commands
+
+| Command | What it does |
 |---|---|
-| `clob create-order` | Place a limit order |
-| `clob market-order` | Place a market order |
-| `clob cancel ORDER_ID` | Cancel an open order |
-| `clob cancel-all` | Cancel all open orders (requires typed YES) |
-| `clob orders` | List open orders |
-| `clob order ORDER_ID` | Get a single order |
-| `clob trades` | List account trades |
-| `clob balance` | Get balance/allowance |
+| `poly buy` / `poly sell` | Place an order (friendly aliases for `clob create-order` / `market-order`) |
+| `poly setup` | Configure your signer key |
+| **`poly clob`** | Trading + account reads (see below) |
+| **`poly data`** | `positions [ADDRESS]`, `value [ADDRESS]` (defaults to your wallet) |
+| **`poly wallet`** | `create`, `import`, `show`, `address`, `reset` |
 
-Note: `clob update-balance` was intentionally removed — it was a duplicate of `clob balance`
-and the SDK has no distinct "refresh balance" endpoint.
+**`poly clob` subcommands**
 
-### Flags (buy / sell / clob create-order)
+| Command | What it does |
+|---|---|
+| `create-order` / `market-order` | Place a limit or market order |
+| `post-orders` | Post multiple limit orders at once |
+| `orders` / `order ID` | List open orders / show one |
+| `trades` | List your account trades |
+| `balance` | Show balance + allowance for an asset type |
+| `cancel ID` / `cancel-orders IDS` | Cancel one / several orders |
+| `cancel-market --market 0x…` | Cancel all orders in a market |
+| `cancel-all` | Cancel everything (asks you to type YES) |
+
+**Global options** (before the command): `-o, --output table|json` (default `table`), `--private-key`.
+
+---
+
+## Order options
+
+For `buy`, `sell`, `clob create-order`, and `clob market-order`:
 
 | Flag | Meaning |
 |---|---|
-| `--token-id` / `--slug` / `--url` | What to trade (one of). With slug/url, use `--outcome`. |
+| `--token-id` · `--slug` · `--url` | What to trade — pick one. With `--slug`/`--url`, add `--outcome`. |
 | `--outcome yes\|no` | Which side of the market (default `yes`). Ignored with `--token-id`. |
-| `--usd` / `--size` | Limit: `--usd` (size = usd/price) **or** `--size` shares. Market: **BUY needs `--usd`**, **SELL needs `--size`**. |
-| `--price` | Limit price per share, strictly between 0 and 1. Required unless `--market`. Rounded to the market tick. |
+| `--usd` · `--size` | Spend N dollars **or** trade N shares. (Limit: either. Market BUY needs `--usd`; market SELL needs `--size`.) |
+| `--price` | Limit price per share, between 0 and 1. Required unless `--market`. Rounded to the market tick. |
 | `--market` | Market order instead of a limit order. |
-| `--order-type` | `GTC` (limit, default) or `FAK`/`FOK` (market). |
-| `--max-spend` | Market BUY only: fee-inclusive USD cap (defaults to `--usd`). |
-| `--dry-run` | Build + sign locally, print details, do **not** submit. |
+| `--max-spend` | Market BUY only: fee-inclusive USD cap (defaults to `--usd`, so you never overspend). |
+| `--dry-run` | Build and sign locally, print details, **do not submit**. |
 | `--yes` | Skip the typed-`YES` confirmation. |
-| `--wallet` | Trade from a non-default wallet address (passed to the SDK). |
 
-> **Market order semantics** mirror the SDK: a market **BUY** spends a USD `amount`
-> (use `--usd`), a market **SELL** delivers `shares` (use `--size`). Mixing them is
-> rejected up front.
+## Examples
+
+```bash
+# Buy $2 of YES by token id, dry-run first.
+poly buy --token-id 1234567… --usd 2 --price 0.65 --dry-run
+
+# Sell 10 shares of NO at a 0.40 limit, no prompt.
+poly sell --slug <market-slug> --outcome no --size 10 --price 0.40 --yes
+
+# Market BUY $2 (spend capped so fees can't exceed it).
+poly buy --url https://polymarket.com/event/… --outcome yes --usd 2 --market
+
+# JSON output for scripts/agents.
+poly -o json clob orders
+poly -o json data positions 0x93772c4c6332901F9F5e6c3F179D623b07D7BbB7 | jq '.[].cash_pnl'
+```
+
+---
 
 ## Safety
 
-Every real submit shows a preview and requires typing `YES` (unless `--yes`).
-Use `--dry-run` to inspect exactly what would be sent. Prices are validated to be
-between 0 and 1; sizes must be positive; amounts are rounded to the tick size before
-being sent as strings — never floats — to avoid the SDK's float-precision rejections.
+- Every real submit shows a **preview** and requires typing **`YES`** (skip with `--yes`).
+- Use **`--dry-run`** to see exactly what would be sent, signed but never submitted.
+- Prices/sizes are validated (price strictly 0–1, size positive), rounded to the market tick, and
+  sent to the SDK as **strings, never floats** — avoiding the precision bugs of the legacy client.
 
-## Wallet
+## Trading from a non-default wallet
 
-The signer key is stored at `~/.config/polymarket/config.json` (chmod 600). The
-key in that file is never printed — `poly wallet show` only prints the derived address.
+The deposit wallet is derived from your key automatically. To trade from a different existing wallet
+(deposit / Safe / proxy / EOA), add `"wallet_address": "0x…"` to `~/.config/polymarket/config.json`.
 
-```bash
-poly wallet create          # generate a new key
-poly wallet import 0x...    # import an existing key
-poly wallet show            # show address + config path
-poly wallet address         # just the address
-poly wallet reset --force   # delete the saved config
-```
+## Notes
+
+- **Not** built on `py-clob-client-v2` (Python) or `rs-clob-client-v2` (the Rust CLI) — both are
+  outdated trade paths that can't post from deposit wallets.
+- `--signature-type` and `clob update-balance` are intentionally absent: the SDK supports only the
+  deposit-wallet derivation, and has no distinct "refresh balance" call.
+- Requires Python ≥3.11; run via `uv`. Tests are offline: `uv run pytest`.
