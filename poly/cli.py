@@ -7,6 +7,7 @@ from .groups import setup as setup_group
 from .groups import markets
 from .groups import clob_trade
 from .groups import data
+from .groups import report as report_group  # clawcreek fast-path (additive)
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="Polymarket CLI.")
 _OUTPUT = {"fmt": "table"}  # mirrored for main()'s error envelope
@@ -17,6 +18,7 @@ app.command("approve")(setup_group.approve_cmd)
 app.add_typer(markets.app, name="markets")
 app.add_typer(clob_trade.app, name="clob")
 app.add_typer(data.app, name="data")
+app.command("report")(report_group.report_cmd)  # clawcreek precomputed-report fast path
 
 
 @app.callback()
