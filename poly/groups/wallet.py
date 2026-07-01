@@ -15,8 +15,11 @@ app = typer.Typer(no_args_is_help=True, help="Manage the signer key (config.json
 # use only. Do not send funds." It IS your account/maker (it holds funds and
 # trades), but you must not transfer to it directly — deposit via the website.
 API_WALLET_NOTE = (
-    "api_wallet is for API/trading use only; do NOT send funds to it directly. "
-    "Deposit via the Polymarket website."
+    "api_wallet is a DERIVED address and may NOT be your real funded account: one key "
+    "derives several wallets and the SDK's default pick can be wrong. Do NOT send funds "
+    "to it. Deposit ONLY via the Polymarket website, and before trading verify this "
+    "equals the deposit address in polymarket.com settings; if it differs, set "
+    "wallet_address in config.json."
 )
 
 
@@ -77,7 +80,7 @@ def show(ctx: typer.Context) -> None:
 @app.command()
 def address(ctx: typer.Context) -> None:
     """Print your api_wallet address (holds funds and trades; do NOT send funds to it)."""
-    emit(_fmt(ctx), {"address": str(_context.secure(ctx).wallet)})
+    emit(_fmt(ctx), {"address": str(_context.secure(ctx).wallet), "note": API_WALLET_NOTE})
 
 
 @app.command()

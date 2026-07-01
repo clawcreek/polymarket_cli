@@ -17,6 +17,15 @@ from .. import trade
 # USDC collateral and outcome-token shares are both quoted in 6-decimal base units.
 BASE_UNIT_DECIMALS = 6
 
+# This balance is for api_wallet, a DERIVED address the SDK may pick wrong. A 0 or
+# unexpected balance on an account you believe is funded often means the CLI is pointed
+# at the wrong wallet — verify `poly wallet show`'s api_wallet against polymarket.com.
+BALANCE_WALLET_NOTE = (
+    "balance is for api_wallet (a derived address the SDK may pick wrong); a 0 or "
+    "unexpected balance on an account you believe is funded may mean the wrong wallet "
+    "— verify `poly wallet show` api_wallet against polymarket.com settings."
+)
+
 # Readable table columns; `-o json` still returns every field.
 ORDER_COLUMNS = ["id", "side", "price", "original_size", "size_matched", "outcome", "status"]
 TRADE_COLUMNS = ["matched_at", "side", "outcome", "price", "size", "status"]
@@ -176,4 +185,5 @@ def balance(
         "asset_type": asset_type.upper(),
         "balance": human,
         "raw": str(raw) if raw is not None else None,
+        "note": BALANCE_WALLET_NOTE,
     })
