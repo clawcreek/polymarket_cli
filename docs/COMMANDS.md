@@ -31,6 +31,8 @@ Put global options **before** the command: `poly [GLOBAL] COMMAND [ARGS]`.
 
 **Two wallet addresses** (see §6 gotchas): the **signer EOA** (your private key's raw address, signs orders) vs the **api_wallet** (SDK-derived account that holds USDC + positions and that orders execute from; what polymarket.com labels "Address — for API use only, do not send funds"). You do **not** send funds to `api_wallet` directly — deposit via the website.
 
+> **⚠️ `api_wallet` is a *derived guess* and can be the WRONG address.** One private key deterministically derives several distinct on-chain addresses — the EOA plus up to four contract wallets (POLY_PROXY / GNOSIS_SAFE / **two** variants of the type-3 deposit wallet: `uups` and `beacon`). With no `wallet_address` set, the SDK computes the deposit wallet from the *current* factory (`derive_current_deposit_wallet_address_sync`), which is **not guaranteed** to be the wallet your account actually deployed and funded. In a real account we saw `api_wallet` resolve to the `beacon` variant (0 USDC) while the funds — and the account the CLOB/website recognize — lived on the `uups` variant. **Never deposit to a CLI-printed address; deposit only via polymarket.com. Verify `wallet show`'s `api_wallet` equals the deposit address on polymarket.com/settings, and if it differs, pin the correct one via `"wallet_address": "0x…"` in `config.json`** (there is no `--wallet` flag).
+
 ```bash
 poly -o json data value          # global option before the command
 ```
@@ -282,6 +284,7 @@ poly data positions 0x9377... --limit 50
 
 - **Always `uv run poly …`** — Python ≥3.11 is required; the system `python3` may be older.
 - **Signer EOA vs api_wallet** — `wallet address` and the `data` default both use the **api_wallet** (holds funds & trades; the website's "API use only" address — do not send funds to it directly). The EOA only signs and is normally empty. They are different addresses.
+- **⚠️ `api_wallet` can be the WRONG derived wallet** — one key derives several addresses (EOA + POLY_PROXY + GNOSIS_SAFE + `uups`/`beacon` type-3 deposit wallets), and the SDK's default pick isn't guaranteed to be your funded account. **Deposit only via polymarket.com** (never to a CLI-printed address); verify `api_wallet` == polymarket.com/settings; if it differs, set `"wallet_address": "0x…"` in `config.json` to force the right account. A live order whose signing wallet ≠ your funded account is rejected for insufficient balance — stop and fix the wallet, don't retry.
 - **Balances are 6-decimal base units on-chain** — `clob balance` converts to human units for you (and shows `raw`); other raw SDK numbers may need ÷ 1,000,000.
 - **Event slug ≠ market slug** — discover the event, then drill to its market slug (`…-usa`, `…-draw`, …) before trading.
 - **`--dry-run` first** — every trade path supports it; it builds + signs + previews **without submitting**. Real submits require a typed `YES` unless `--yes`.
