@@ -71,15 +71,25 @@ The trading flow is:
 | `poly/trade.py` | `trade.build_plan(...)` is the pure orchestrator: resolves target, builds an `OrderPlan`. `trade.run(ctx, ...)` emits preview, calls `_build_signed`, then either emits dry-run output or confirms + submits. `_build_signed` is the single place orders are constructed (shared by dry-run and live paths). `InsufficientAllowanceError` triggers a one-time user-confirmed approvals retry inside `_submit`. |
 | `poly/market.py` | `resolve_target()` maps `--token-id` / `--slug` / `--url` (+ `--outcome`) to a frozen `ResolvedTarget` via the public Gamma API. Best-effort: failures return `None`/partial data and never block direct `--token-id` trading. `live_price()` likewise swallows errors. |
 | `poly/orders.py` | Validation, sizing, tick rounding, and Decimal→string serialization. `build_signed_limit_order` / `build_signed_market_order` **sign without posting**; `post_signed_order` submits separately. Enforces SDK market-order semantics: BUY takes `amount` (USD), SELL takes `shares`. |
-| `poly/config.py` | `Settings` frozen dataclass (`private_key` marked `field(repr=False)` so tracebacks never leak it). `load_settings()` implements the key resolution order above. `build_public_client()` / `build_secure_client()`. |
+| `poly/config.py` | `Settings` frozen dataclass (`private_key` marked `field(repr=False)` so tracebacks never leak it). `load_settings()` implements the key resolution order above. `build_public_client()` / `build_secure_client()`. **`resolve_deposit_wallet()`** asks Polymarket's `profiles` API for the real deposit wallet; `build_secure_client` uses a `config.json` pin first, then that lookup, and **raises rather than let the SDK derive an address** (see the wallet invariant below). |
 | `poly/output.py` | `emit(fmt, data)` — the only printing point; supports `table` and `json` output modes. |
 | `poly/groups/clob_trade.py` | `clob` Typer sub-app: `create-order`, `market-order`, `cancel`, `cancel-all`, `orders`, `order`, `trades`, `balance`. Note: `update-balance` was intentionally removed — it was a byte-for-byte duplicate of `balance` and the SDK has no distinct refresh. |
-| `poly/groups/wallet.py` | `wallet` sub-app: `show`, `import`, `balance`. |
+| `poly/groups/wallet.py` | `wallet` sub-app: `create`, `import`, `show`, `address`, `reset`. `show` also reports `wallet_source` (`config.json` \| `polymarket_profile`). |
+| `poly/groups/redeem.py` | top-level `redeem`: collects winnings from a resolved market via the SDK's `redeem_positions` (one of `--condition-id` / `--slug`). Gasless through the relayer flow. |
+| `poly/groups/report.py` | top-level `report`: clawcreek precomputed-report fast path (additive; reads `$POLYMARKET_REPORT_URL`). |
 | `poly/groups/data.py` | `data` sub-app: `positions`, `value`. |
 | `poly/groups/setup.py` | `setup` command: interactive wizard that writes `~/.config/polymarket/config.json`. |
 
 ### Design points to preserve when editing
 
+- **Never let the SDK derive the deposit wallet.** `build_secure_client` accepts only an authoritative
+  address — a `config.json` pin, else Polymarket's `profiles` lookup — and **raises** if it has neither.
+  One key derives several addresses and the derived pick is not always the funded account (upstream
+  `polymarket-cli#14`; Polymarket's docs call the profiles/settings address the only source of truth).
+  Using the wrong one reads as "balance 0 / order rejected" — indistinguishable from "not funded", so
+  the user deposits again, possibly stranding funds. **Any other client-construction path — including
+  downstream shims that monkeypatch this function — must resolve the same way**, or it silently opts
+  out of this protection.
 - **Don't duplicate signing logic.** `trade._build_signed` is the only place orders are constructed; dry-run
   and live submission both call it. Keep build and submit separate.
 - **Keep secrets out of `repr`.** When adding a secret to `Settings`, mark it `field(repr=False)`.

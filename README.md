@@ -170,11 +170,26 @@ Global options (before the command): `-o, --output table|json` (default `table`)
 
 | Group | Commands |
 |---|---|
-| *(top level)* | `setup`, `buy`, `sell` |
+| *(top level)* | `setup`, `buy`, `sell`, `approve`, `redeem`, `report` |
 | `wallet` | `create`, `import`, `show`, `address`, `reset` |
 | `markets` | `search`, `get`, `list` |
 | `clob` | `create-order`, `market-order`, `post-orders`, `orders`, `order`, `trades`, `balance`, `cancel`, `cancel-orders`, `cancel-market`, `cancel-all` |
 | `data` | `positions`, `value` |
+
+`approve` sets the one-time gasless trading approvals; `redeem` collects your winnings from a resolved
+market; `report` fetches a precomputed market report when one is configured.
+
+### Collecting winnings
+
+A resolved market doesn't pay out by itself. `poly data positions` marks claimable rows with
+**`redeemable`** — redeem them without going back to the website:
+
+```bash
+poly -o json data positions                       # look for redeemable: true
+poly -o json redeem --slug <market-slug>          # or --condition-id <id>
+```
+
+Gasless when a Relayer key is configured; otherwise it broadcasts from your signer and needs MATIC.
 
 `poly buy`/`sell` are friendly aliases for `clob create-order` / `market-order`. Run `poly <group> --help`
 or `poly <group> <command> --help` for full options.
