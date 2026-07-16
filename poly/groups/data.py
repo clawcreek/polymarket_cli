@@ -8,7 +8,11 @@ from ..pagination import collect
 app = typer.Typer(no_args_is_help=True, help="On-chain portfolio data.")
 
 # Readable table columns; `-o json` still returns every field.
-POSITION_COLUMNS = ["title", "outcome", "size", "avg_price", "cur_price", "current_value", "cash_pnl", "percent_pnl"]
+# `redeemable` marks a RESOLVED position whose winnings are still sitting unclaimed —
+# surface it so `poly redeem` (and the agent) can act on it instead of the user having to
+# notice on the website. It rides along in -o json regardless; this puts it in the table too.
+POSITION_COLUMNS = ["title", "outcome", "size", "avg_price", "cur_price", "current_value",
+                    "cash_pnl", "percent_pnl", "redeemable"]
 
 
 def _resolve_user(ctx: typer.Context, address: str | None) -> str:
