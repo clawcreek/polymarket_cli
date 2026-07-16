@@ -14,13 +14,21 @@ app = typer.Typer(no_args_is_help=True, help="Manage the signer key (config.json
 # The active wallet is the address Polymarket's website labels "Address — for API
 # use only. Do not send funds." It IS your account/maker (it holds funds and
 # trades), but you must not transfer to it directly — deposit via the website.
+# api_wallet can now only ever be an AUTHORITATIVE address — either the owner's pinned
+# wallet_address or Polymarket's own profiles lookup; the SDK's derived guess is refused
+# outright in build_secure_client. So the note no longer says "this might be wrong"; it
+# warns about the thing that is still true and still loses money.
 API_WALLET_NOTE = (
-    "api_wallet is a DERIVED address and may NOT be your real funded account: one key "
-    "derives several wallets and the SDK's default pick can be wrong. Do NOT send funds "
-    "to it. Deposit ONLY via the Polymarket website, and before trading verify this "
-    "equals the deposit address in polymarket.com settings; if it differs, set "
-    "wallet_address in config.json."
+    "api_wallet is your Polymarket account (confirmed via your pinned wallet_address or "
+    "Polymarket's own profile lookup). Do NOT send funds to it directly — deposit ONLY "
+    "via the Polymarket website's Deposit screen."
 )
+
+
+def _wallet_source(cfg: dict) -> str:
+    """Which authoritative source api_wallet came from. The SDK's local derivation is
+    never used, so there is no untrusted case to report here."""
+    return "config.json" if cfg.get("wallet_address") else "polymarket_profile"
 
 
 def _fmt(ctx: typer.Context) -> str:
@@ -73,7 +81,7 @@ def show(ctx: typer.Context) -> None:
     api_wallet = _api_wallet(ctx) if key else None
     fields = {"signer_eoa": eoa, "api_wallet": api_wallet}
     if api_wallet:
-        fields = {**fields, "note": API_WALLET_NOTE}
+        fields = {**fields, "wallet_source": _wallet_source(cfg), "note": API_WALLET_NOTE}
     emit(_fmt(ctx), {**fields, "config": str(CONFIG_PATH)})
 
 

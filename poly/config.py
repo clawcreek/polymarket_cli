@@ -134,11 +134,51 @@ def build_public_client():
     return PublicClient(resolve_environment())
 
 
+def resolve_deposit_wallet(private_key: str):
+    """Ask Polymarket which deposit wallet this signer actually owns, or None.
+
+    One key derives SEVERAL addresses and the SDK's local derivation is not always the
+    account Polymarket assigned/funded — trading or depositing against the wrong one reads
+    as "balance 0 / order rejected". Polymarket's public `profiles` lookup is the
+    authoritative source (it returns the server-side proxy/deposit wallet), so we ask it
+    instead of guessing.
+
+    Returns None when there is no profile (a fresh signer that never logged in to
+    Polymarket) or the lookup fails — the caller then lets the SDK derive as before.
+    Network call; best-effort by design, never fatal.
+    """
+    from eth_account import Account
+
+    try:
+        eoa = Account.from_key(private_key).address
+        profile = build_public_client().get_public_profile(eoa)
+    except Exception:  # noqa: BLE001 — a profile lookup must never break a command
+        return None
+    wallet = getattr(profile, "wallet", None) if profile is not None else None
+    return str(wallet) if wallet else None
+
+
 def build_secure_client(settings: Settings):
     from polymarket import SecureClient
+
+    # Wallet resolution — NEVER fall back to the SDK's local derivation. One key derives
+    # several addresses and the derived pick is not always the account Polymarket assigned
+    # (upstream polymarket-cli#14); acting on the wrong one reads as "balance 0 / rejected"
+    # and can strand a deposit. Only authoritative sources are accepted:
+    #   1. wallet_address pinned in config.json (copied from polymarket.com/settings), or
+    #   2. Polymarket's own profiles lookup — the source their docs call authoritative.
+    # Neither available -> fail loudly and say what's missing.
+    wallet = settings.wallet_address or resolve_deposit_wallet(settings.private_key)
+    if not wallet:
+        raise SystemExit(
+            "No deposit wallet address. Polymarket has no profile for this signer, and no "
+            "wallet_address is set in the config — the SDK's derived guess is not trusted "
+            "(it is often the wrong account). Fix: log in at polymarket.com with this "
+            "wallet, copy the deposit address from Settings, and set it as wallet_address."
+        )
     return SecureClient.create(
         private_key=settings.private_key,
-        wallet=settings.wallet_address,
+        wallet=wallet,
         environment=resolve_environment(),
         api_key=resolve_relayer_api_key(settings.private_key),
     )
