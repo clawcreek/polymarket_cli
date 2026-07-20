@@ -17,13 +17,17 @@ from .. import trade
 # USDC collateral and outcome-token shares are both quoted in 6-decimal base units.
 BASE_UNIT_DECIMALS = 6
 
-# This balance is for api_wallet, a DERIVED address the SDK may pick wrong. A 0 or
-# unexpected balance on an account you believe is funded often means the CLI is pointed
-# at the wrong wallet — verify `poly wallet show`'s api_wallet against polymarket.com.
+# api_wallet is resolved from an authoritative source only — the pinned wallet_address
+# or Polymarket's own profiles lookup — and build_secure_client refuses the SDK's derived
+# guess outright. So this note no longer tells the caller to hand-verify the address; that
+# advice contradicted the resolution model and sent people chasing a wallet mismatch that
+# can no longer happen. What is still true: a 0 balance is most likely genuinely unfunded,
+# and a sub-minimum deposit sits pending instead of landing.
 BALANCE_WALLET_NOTE = (
-    "balance is for api_wallet (a derived address the SDK may pick wrong); a 0 or "
-    "unexpected balance on an account you believe is funded may mean the wrong wallet "
-    "— verify `poly wallet show` api_wallet against polymarket.com settings."
+    "balance is for api_wallet, your Polymarket account (resolved from your pinned "
+    "wallet_address or Polymarket's profile lookup — never a derived guess). A 0 balance "
+    "usually means it is unfunded; check the Deposit screen for a pending transfer below "
+    "the minimum before sending more."
 )
 
 # Readable table columns; `-o json` still returns every field.
