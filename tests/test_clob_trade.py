@@ -123,3 +123,29 @@ def test_cancel_all_aborts_without_yes(monkeypatch):
     result = runner.invoke(app, ["clob", "cancel-all"])
     assert result.exit_code != 0 or "aborted" in result.output
     assert not fake.cancel_all_called
+
+
+def test_balance_note_matches_the_resolution_model():
+    """The note ships with every `clob balance` result, and the skill's golden rules
+    oblige an agent to quote it verbatim — so it must not contradict how api_wallet is
+    actually resolved.
+
+    build_secure_client refuses the SDK's derived address outright: api_wallet comes
+    from the pinned wallet_address or Polymarket's profiles lookup, or the command
+    fails. The old note predated that and told callers the address "may be wrong" and
+    to hand-verify it against the website, which sent them chasing a mismatch that can
+    no longer occur.
+    """
+    from poly.groups.clob_trade import BALANCE_WALLET_NOTE
+
+    note = BALANCE_WALLET_NOTE.lower()
+
+    # Retired advice must not come back.
+    assert "may pick wrong" not in note
+    assert "wrong wallet" not in note
+    assert "verify" not in note
+
+    # The note should say where the address came from, and point at the real cause of
+    # a surprising zero.
+    assert "profile lookup" in note or "wallet_address" in note
+    assert "pending" in note
