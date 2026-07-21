@@ -51,14 +51,29 @@ def status(deposit_address: str) -> dict:
     return _request(f"/status/{deposit_address}")
 
 
+# The bridge names chains in display form; the CLI keys them short. Without this
+# mapping "bsc" never matches "BNB Smart Chain", the minimum comes back None, and
+# a sub-minimum deposit sails through — to sit pending at the bridge.
+CHAIN_DISPLAY_NAMES = {
+    "ethereum": "Ethereum",
+    "polygon": "Polygon",
+    "base": "Base",
+    "arbitrum": "Arbitrum",
+    "optimism": "Optimism",
+    "bsc": "BNB Smart Chain",
+}
+
+
 def min_deposit_usd(chain_name: str, assets: list[dict] | None = None) -> float | None:
     """Smallest minCheckoutUsd advertised for a chain, or None if unlisted.
 
-    Funds below the minimum sit pending instead of crediting, so the send path
-    checks against this first.
+    Accepts either the CLI's short chain key ("bsc") or the bridge's display name
+    ("BNB Smart Chain"). Funds below the minimum sit pending instead of crediting,
+    so the send path checks against this first.
     """
     assets = assets if assets is not None else supported_assets()
+    display = CHAIN_DISPLAY_NAMES.get(chain_name.lower(), chain_name)
     mins = [a.get("minCheckoutUsd") for a in assets
-            if str(a.get("chainName", "")).lower() == chain_name.lower()
+            if str(a.get("chainName", "")).lower() == display.lower()
             and a.get("minCheckoutUsd") is not None]
     return float(min(mins)) if mins else None

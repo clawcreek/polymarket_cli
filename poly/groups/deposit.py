@@ -75,7 +75,7 @@ def scan(ctx: typer.Context) -> None:
             rows.append({"chain": chain, "error": str(exc)[:60]})
             continue
         gas_ok = native >= gas.cost_wei
-        min_usd = bridge_api.min_deposit_usd(chain.capitalize(), assets)
+        min_usd = bridge_api.min_deposit_usd(chain, assets)
         for symbol, (addr, dec) in cfg["tokens"].items():
             try:
                 bal = onchain.token_balance(chain, addr, signer)
@@ -97,6 +97,110 @@ def scan(ctx: typer.Context) -> None:
             rows.append({"chain": chain, "token": cfg["native"], "balance": f"{native_h:.6f}",
                          "gas_native": f"{native_h:.6f} {cfg['native']}", "sendable": gas_ok})
     emit(ctx.obj.output, {"signer": signer, "holdings": rows})
+
+
+# --- Relayer (activation) -----------------------------------------------------
+# The relayer host is NOT region-blocked; default to calling it directly.
+_RELAYER_DEFAULT = "https://relayer-v2.polymarket.com"
+
+
+def _relayer_url() -> str:
+    return (os.environ.get("POLYMARKET_RELAYER_URL") or _RELAYER_DEFAULT).rstrip("/")
+
+
+def _relayer_request(path: str, *, method: str = "GET", body: dict | None = None,
+                     api_key: str | None = None, signer: str | None = None) -> dict:
+    import json as _json
+    import urllib.request
+    url = f"{_relayer_url()}{path}"
+    data = _json.dumps(body).encode() if body is not None else None
+    headers = {"User-Agent": "poly-cli/1.0"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if api_key:
+        # These two headers ARE the auth for /submit — no signature field in the payload.
+        headers["RELAYER_API_KEY"] = api_key
+        headers["RELAYER_API_KEY_ADDRESS"] = signer or ""
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return _json.load(resp)
+
+
+def _wallet_create_payload(signer: str, factory: str) -> dict:
+    """The official WALLET-CREATE submit body. Deliberately signature-free: the
+    relayer authenticates the CALLER (the two RELAYER_API_KEY headers), deploys the
+    deposit wallet for `from`, and pays the gas itself."""
+    return {"type": "WALLET-CREATE", "from": signer, "to": factory}
+
+
+@app.command()
+def deploy(
+    ctx: typer.Context,
+    wait: int = typer.Option(90, help="Seconds to wait for on-chain confirmation"),
+) -> None:
+    """Deploy the Polymarket deposit wallet — the one-time account activation.
+
+    A brand-new wallet's deposit wallet exists only as a derived address until this
+    runs; until then the CLOB rejects the account with `invalid authorization`.
+    Needs POLYMARKET_RELAYER_API_KEY (minted at polymarket.com → Settings → API
+    Keys, registered to this signer). Idempotent — exits cleanly if already
+    deployed. Follow with `poly approve` to grant the trading allowances.
+    """
+    import time as _time
+
+    pk = _pk(ctx)
+    signer = onchain.signer_address(pk)
+
+    # /deployed keys by the DEPOSIT WALLET address (verified: EOA → false even when
+    # deployed). Resolution needs a Polymarket profile — which exists iff the wallet
+    # has signed in once, the same prerequisite minting the relayer key has.
+    wallet = config.resolve_deposit_wallet(pk)
+    if not wallet:
+        emit(ctx.obj.output, {"ok": False, "reason": "no_profile",
+                              "message": ("this wallet has never signed in to polymarket.com — sign in "
+                                          "once (wallet connection) to create the account, then retry")})
+        raise typer.Exit(1)
+
+    dep = _relayer_request(f"/deployed?address={wallet}&type=WALLET")
+    if dep.get("deployed"):
+        emit(ctx.obj.output, {"ok": True, "already_deployed": True, "signer": signer, "wallet": wallet,
+                              "next": "run `poly approve` if allowances are not set yet"})
+        return
+
+    api_key = os.environ.get("POLYMARKET_RELAYER_API_KEY")
+    if not api_key:
+        emit(ctx.obj.output, {"ok": False, "reason": "no_relayer_key",
+                              "message": ("deploying needs POLYMARKET_RELAYER_API_KEY — create a Relayer "
+                                          "API key at polymarket.com → Settings → API Keys (36-char UUID, "
+                                          "registered to this wallet) and set it")})
+        raise typer.Exit(1)
+
+    # Factory address comes from the SDK environment (single source of truth).
+    factory = config.resolve_environment().wallet_derivation.deposit_wallet_factory
+    try:
+        resp = _relayer_request("/submit", method="POST",
+                                body=_wallet_create_payload(signer, str(factory)),
+                                api_key=api_key, signer=signer)
+    except Exception as exc:  # noqa: BLE001 — surface the relayer's rejection verbatim
+        emit(ctx.obj.output, {"ok": False, "reason": "submit_failed", "message": str(exc)[:300]})
+        raise typer.Exit(1)
+
+    deadline = _time.time() + max(wait, 10)
+    deployed = False
+    while _time.time() < deadline:
+        _time.sleep(8)
+        try:
+            if _relayer_request(f"/deployed?address={wallet}&type=WALLET").get("deployed"):
+                deployed = True
+                break
+        except Exception:  # noqa: BLE001 — transient poll failures don't fail the deploy
+            continue
+    emit(ctx.obj.output, {
+        "ok": True, "submitted": True, "deployed": deployed, "signer": signer, "wallet": wallet,
+        "transaction_id": resp.get("transactionID"), "transaction_hash": resp.get("transactionHash"),
+        "next": ("run `poly approve` to grant trading allowances" if deployed else
+                 "still confirming — re-check with: poly deposit deploy (idempotent)"),
+    })
 
 
 @app.command()
@@ -160,7 +264,7 @@ def send(
                                   "message": f"have {Decimal(have)/(Decimal(10)**dec)} {token}, need {amount}"})
             raise typer.Exit(1)
 
-    min_usd = bridge_api.min_deposit_usd(chain.capitalize())
+    min_usd = bridge_api.min_deposit_usd(chain)
     if min_usd is not None and amount < min_usd:
         emit(ctx.obj.output, {"ok": False, "reason": "below_minimum",
                               "message": f"{chain} minimum deposit is ${min_usd}; {amount} would sit pending"})
