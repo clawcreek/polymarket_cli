@@ -11,14 +11,28 @@ balance and whether it covers a transfer for every funded chain, so the agent
 can pick a chain it can actually send from rather than discovering the shortfall
 mid-transfer.
 """
+import os
 from decimal import Decimal
 
 import typer
 
-from .. import bridge_api, config, context as _context, onchain
+from .. import bridge_api, config, context as _context, gasless, onchain
 from ..output import emit
 
 app = typer.Typer(no_args_is_help=True, help="Fund Polymarket from another chain (cross-chain deposit).")
+
+# Where a gasless deposit lands: USDC.e on Polygon is Polymarket's tradable collateral.
+_POLYGON_CHAIN_ID = 137
+_POLYGON_USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+
+
+def _relay_key() -> str | None:
+    # The skill injects the Relay key; accept the common names so setup can't miss.
+    for name in ("POLYMARKET_RELAY_API_KEY", "RELAY_API_KEY", "RELAYER_API_KEY"):
+        v = os.environ.get(name)
+        if v:
+            return v
+    return None
 
 
 def _pk(ctx: typer.Context) -> str:
@@ -128,7 +142,9 @@ def send(
             "ok": False, "reason": "insufficient_gas",
             "message": (f"{chain} has {native/1e18:.6f} {cfg['native']} but a transfer needs "
                         f"~{gas.cost_native:.6f}. This chain holds a token with no native gas to move "
-                        f"it — fund a little {cfg['native']} here, or bridge from a chain that has gas."),
+                        f"it — use the gasless path instead: `poly deposit gasless --chain {chain} "
+                        f"--token {token.upper()} --amount {amount}` (a sponsor pays the gas), or fund "
+                        f"a little {cfg['native']} here."),
         })
         raise typer.Exit(1)
 
@@ -167,6 +183,88 @@ def send(
     tx_hash = onchain.send_transfer(chain, pk, to_addr, token_addr=token_addr, amount_base_units=units)
     emit(ctx.obj.output, {"ok": True, "submitted": True, "tx_hash": tx_hash, "plan": plan,
                           "next": f"poll: poly deposit status {to_addr}"})
+
+
+@app.command(name="gasless")
+def gasless_cmd(
+    ctx: typer.Context,
+    chain: str = typer.Option(..., help="Source chain the funds sit on (e.g. bsc)"),
+    token: str = typer.Option("USDC", help="Token to move (USDC, USDT, …)"),
+    amount: float = typer.Option(..., help="Amount in human units"),
+    wallet: str = typer.Option(None, help="Polymarket deposit wallet (recipient); defaults to the resolved one"),
+    yes: bool = typer.Option(False, "--yes", help="Skip the preview and submit"),
+) -> None:
+    """Move a token to Polymarket with no native gas — a sponsor pays (EIP-7702 + Relay).
+
+    For the exact case `scan` flags `sendable:false`: a stablecoin on a chain
+    where the signer holds zero native token. Delegates the EOA to Calibur via an
+    offline 7702 authorization, batches approve+deposit, and submits through
+    Relay with fee subsidy. Relay swaps cross-chain and lands USDC.e on Polygon in
+    the deposit wallet. No native token, no permit, any ERC-20.
+    """
+    pk = _pk(ctx)
+    chain = chain.lower()
+    if chain not in onchain.CHAINS:
+        raise typer.BadParameter(f"unknown chain '{chain}'; one of {sorted(onchain.CHAINS)}")
+    cfg = onchain.CHAINS[chain]
+    if token.upper() not in cfg["tokens"]:
+        raise typer.BadParameter(f"{token} not known on {chain}; have {list(cfg['tokens'])}")
+
+    api_key = _relay_key()
+    if not api_key:
+        emit(ctx.obj.output, {"ok": False, "reason": "no_relay_key",
+                              "message": "gasless needs a Relay API key: set RELAY_API_KEY (or POLYMARKET_RELAY_API_KEY)"})
+        raise typer.Exit(1)
+
+    signer = onchain.signer_address(pk)
+    token_addr, dec = cfg["tokens"][token.upper()]
+    units = _units(amount, dec)
+    have = onchain.token_balance(chain, token_addr, signer)
+    if have < units:
+        emit(ctx.obj.output, {"ok": False, "reason": "insufficient_balance",
+                              "message": f"have {Decimal(have)/(Decimal(10)**dec)} {token}, need {amount}"})
+        raise typer.Exit(1)
+
+    recipient = wallet or config.resolve_deposit_wallet(pk) or signer
+
+    try:
+        q = gasless.quote(
+            user=signer, origin_chain_id=cfg["chain_id"], dest_chain_id=_POLYGON_CHAIN_ID,
+            origin_currency=token_addr, dest_currency=_POLYGON_USDC_E,
+            amount_base_units=units, recipient=recipient, api_key=api_key)
+    except gasless.GaslessError as exc:
+        emit(ctx.obj.output, {"ok": False, "reason": "quote_failed", "message": str(exc)})
+        raise typer.Exit(1)
+
+    out = q.get("details", {}).get("currencyOut", {})
+    receive = out.get("amountFormatted")
+    exe = gasless.build_execution(private_key=pk, chain=chain, quote_resp=q)
+
+    plan = {"chain": chain, "token": token.upper(), "amount": amount, "recipient": recipient,
+            "receive": f"{receive} USDC.e on Polygon", "delegated": exe["delegated"],
+            "sponsor_pays_gas": True, "request_id": exe["request_id"]}
+    if not yes:
+        emit(ctx.obj.output, {"ok": True, "dry_run": True, "plan": plan,
+                              "note": "re-run with --yes to submit (sponsor pays the gas)"})
+        return
+
+    try:
+        res = gasless.submit(exe["execute_body"], api_key)
+    except gasless.GaslessError as exc:
+        emit(ctx.obj.output, {"ok": False, "reason": "execute_failed", "message": str(exc), "plan": plan})
+        raise typer.Exit(1)
+    req = res.get("requestId") or exe["request_id"]
+    emit(ctx.obj.output, {"ok": True, "submitted": True, "request_id": req, "plan": plan,
+                          "next": f"poll: poly deposit gasless-status {req}"})
+
+
+@app.command(name="gasless-status")
+def gasless_status(ctx: typer.Context, request_id: str = typer.Argument(..., help="Relay requestId from `gasless`")) -> None:
+    """Relay intent status for a gasless deposit (pending → success | failure | refund)."""
+    api_key = _relay_key()
+    if not api_key:
+        raise typer.BadParameter("gasless-status needs a Relay API key (RELAY_API_KEY)")
+    emit(ctx.obj.output, gasless.status(request_id, api_key))
 
 
 @app.command()
