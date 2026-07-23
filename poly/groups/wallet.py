@@ -1,11 +1,13 @@
 # poly/groups/wallet.py
 """Local wallet/key management backed by config.json."""
 
+import os
+
 import typer
 from eth_account import Account
 
 from .. import context as _context
-from ..config import CONFIG_PATH, load_config, save_config
+from ..config import CONFIG_PATH, _normalize_key, load_config, save_config
 from ..context import CliContext
 from ..output import emit
 
@@ -75,13 +77,26 @@ def show(ctx: typer.Context) -> None:
     api_wallet is the address Polymarket's website labels "for API use only — do
     not send funds"; it holds your funds and trades. Deposit via the website.
     """
+    # Resolve the key the same way every other command does (flag > env > config).
+    # Reading only config.json here made `show` answer nulls on platforms that
+    # inject POLYMARKET_PRIVATE_KEY and never write a config file — the one command
+    # the docs say to verify with was the one command that couldn't see the key.
     cfg = load_config(path=CONFIG_PATH)
-    key = cfg.get("private_key")
-    eoa = Account.from_key(key).address if key else None
+    flag_key = _context._ctx(ctx).private_key if isinstance(ctx.obj, CliContext) else None
+    env_key = (os.environ.get("POLYMARKET_PRIVATE_KEY") or "").strip() or None
+    cfg_key = cfg.get("private_key")
+    key = flag_key or env_key or cfg_key
+    key_source = "flag" if flag_key else "env" if env_key else "config.json" if cfg_key else None
+    eoa = Account.from_key(_normalize_key(key)).address if key else None
     api_wallet = _api_wallet(ctx) if key else None
-    fields = {"signer_eoa": eoa, "api_wallet": api_wallet}
+    fields = {"signer_eoa": eoa, "api_wallet": api_wallet, "key_source": key_source}
     if api_wallet:
         fields = {**fields, "wallet_source": _wallet_source(cfg), "note": API_WALLET_NOTE}
+    if not key:
+        fields = {**fields, "note": (
+            "no signer key found — checked --private-key, POLYMARKET_PRIVATE_KEY, "
+            "and config.json. Run `poly setup` or `poly wallet import 0x...`."
+        )}
     emit(_fmt(ctx), {**fields, "config": str(CONFIG_PATH)})
 
 

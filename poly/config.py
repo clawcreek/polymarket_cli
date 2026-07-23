@@ -171,10 +171,12 @@ def build_secure_client(settings: Settings):
     wallet = settings.wallet_address or resolve_deposit_wallet(settings.private_key)
     if not wallet:
         raise SystemExit(
-            "No deposit wallet address. Polymarket has no profile for this signer, and no "
-            "wallet_address is set in the config — the SDK's derived guess is not trusted "
-            "(it is often the wrong account). Fix: log in at polymarket.com with this "
-            "wallet, copy the deposit address from Settings, and set it as wallet_address."
+            "No deposit wallet address: this signer has never signed in to polymarket.com, "
+            "so Polymarket has no account (profile) for it yet — and the SDK's derived guess "
+            "is not trusted (it is often the wrong account). Fix: sign in at polymarket.com "
+            "once WITH THIS WALLET (that creates the account; the address then resolves "
+            "automatically on the next run). Until then, market reads work but account "
+            "reads/trading cannot. Advanced fallback: pin wallet_address in config.json."
         )
     return SecureClient.create(
         private_key=settings.private_key,
