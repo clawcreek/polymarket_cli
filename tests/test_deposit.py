@@ -69,3 +69,75 @@ def test_relayer_url_default_and_override(monkeypatch):
     assert d._relayer_url() == "https://relayer-v2.polymarket.com"
     monkeypatch.setenv("POLYMARKET_RELAYER_URL", "https://x.example/api/")
     assert d._relayer_url() == "https://x.example/api"
+
+
+# ---- pUSD routing + the no-guess wallet invariant in send/addresses ----
+
+from types import SimpleNamespace
+import json as _json
+from typer.testing import CliRunner
+from poly.cli import app as _app
+from poly import config as _config
+import poly.groups.deposit as _dep
+
+_runner = CliRunner()
+
+
+def test_polygon_registry_knows_pusd_and_usdce():
+    tokens = onchain.CHAINS["polygon"]["tokens"]
+    assert tokens["PUSD"] == ("0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB", 6)
+    assert tokens["USDC.E"][0] == "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+
+
+def _wire_send(monkeypatch, resolved_wallet="0xAPIWALLET"):
+    monkeypatch.setattr(_dep, "_pk", lambda ctx: "0x" + "a" * 64)
+    monkeypatch.setattr(onchain, "signer_address", lambda pk: "0xSIGNER")
+    monkeypatch.setattr(onchain, "estimate_gas",
+                        lambda chain, is_token: SimpleNamespace(cost_wei=1, cost_native=0.0001))
+    monkeypatch.setattr(onchain, "native_balance", lambda chain, addr: 10**18)
+    monkeypatch.setattr(onchain, "token_balance", lambda chain, token, addr: 10**24)
+    monkeypatch.setattr(_config, "resolve_deposit_wallet", lambda pk: resolved_wallet)
+    monkeypatch.setattr(bridge_api, "min_deposit_usd", lambda chain: 2)
+    monkeypatch.setattr(bridge_api, "deposit_addresses", lambda w: {"evm": "0xBRIDGE"})
+
+
+def test_send_pusd_goes_straight_to_api_wallet(monkeypatch):
+    """pUSD IS the collateral: no bridge hop, no bridge minimum — direct to api_wallet."""
+    _wire_send(monkeypatch)
+    monkeypatch.setattr(bridge_api, "deposit_addresses",
+                        lambda w: (_ for _ in ()).throw(AssertionError("bridge must not be called for pUSD")))
+    monkeypatch.setattr(bridge_api, "min_deposit_usd",
+                        lambda chain: (_ for _ in ()).throw(AssertionError("no bridge minimum for pUSD")))
+    r = _runner.invoke(_app, ["-o", "json", "deposit", "send", "--chain", "polygon",
+                              "--token", "pUSD", "--amount", "2.5"])
+    assert r.exit_code == 0, r.output
+    plan = _json.loads(r.output)["plan"]
+    assert plan["to"] == "0xAPIWALLET"
+    assert plan["polymarket_wallet"] == "0xAPIWALLET"
+
+
+def test_send_usdc_still_routes_via_bridge(monkeypatch):
+    _wire_send(monkeypatch)
+    r = _runner.invoke(_app, ["-o", "json", "deposit", "send", "--chain", "polygon",
+                              "--token", "USDC", "--amount", "2.5"])
+    assert r.exit_code == 0, r.output
+    assert _json.loads(r.output)["plan"]["to"] == "0xBRIDGE"
+
+
+def test_send_refuses_to_guess_wallet(monkeypatch):
+    """resolve fails -> hard stop. The old `or signer` fallback bridged funds to the
+    EOA: the bridge minted pUSD to the signer and every balance read showed 0."""
+    _wire_send(monkeypatch, resolved_wallet=None)
+    r = _runner.invoke(_app, ["-o", "json", "deposit", "send", "--chain", "polygon",
+                              "--token", "USDC", "--amount", "2.5"])
+    assert r.exit_code == 1
+    assert "no_deposit_wallet" in r.output
+    assert "0xSIGNER" not in r.output
+
+
+def test_addresses_refuses_to_guess_wallet(monkeypatch):
+    monkeypatch.setattr(_dep, "_pk", lambda ctx: "0x" + "a" * 64)
+    monkeypatch.setattr(_config, "resolve_deposit_wallet", lambda pk: None)
+    r = _runner.invoke(_app, ["-o", "json", "deposit", "addresses"])
+    assert r.exit_code == 1
+    assert "no_deposit_wallet" in r.output

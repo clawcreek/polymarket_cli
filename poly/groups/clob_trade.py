@@ -25,9 +25,12 @@ BASE_UNIT_DECIMALS = 6
 # and a sub-minimum deposit sits pending instead of landing.
 BALANCE_WALLET_NOTE = (
     "balance is for api_wallet, your Polymarket account (resolved from your pinned "
-    "wallet_address or Polymarket's profile lookup — never a derived guess). A 0 balance "
-    "usually means it is unfunded; check the Deposit screen for a pending transfer below "
-    "the minimum before sending more."
+    "wallet_address or Polymarket's profile lookup — never a derived guess). Collateral "
+    "is pUSD since Polymarket's 2026-04 exchange upgrade: this number IS the api_wallet's "
+    "on-chain pUSD balance. If it reads 0 but the account was funded, run `poly deposit "
+    "scan` before concluding anything — bridged deposits can land as pUSD on the signer "
+    "EOA (one `poly deposit send --chain polygon --token PUSD` hop away from the account), "
+    "and a sub-minimum bridge deposit sits pending instead of landing."
 )
 
 # Readable table columns; `-o json` still returns every field.

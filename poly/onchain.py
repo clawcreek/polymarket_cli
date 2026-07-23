@@ -39,6 +39,13 @@ CHAINS: dict[str, dict] = {
         "tokens": {
             "USDC": ("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", 6),
             "USDT": ("0xc2132D05D31c914a87C6611C10748AEb04B58e8F", 6),
+            # USDC.e — Polymarket's pre-2026-04 collateral and still the bridge's
+            # wrap-source on Polygon. Uppercase key: send() looks up token.upper().
+            "USDC.E": ("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", 6),
+            # pUSD — Polymarket USD, the exchange collateral since the 2026-04-28
+            # upgrade. Bridged/onramp deposits can MINT this straight to an EOA, so
+            # scan must see it or funded wallets read as empty (the 乙一 case).
+            "PUSD": ("0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB", 6),
         },
     },
     "base": {

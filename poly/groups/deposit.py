@@ -207,7 +207,15 @@ def deploy(
 def addresses(ctx: typer.Context, wallet: str = typer.Option(None, help="Polymarket deposit wallet; defaults to the resolved one")) -> None:
     """Per-user bridge deposit addresses (evm / svm / tron / btc)."""
     pk = _pk(ctx)
-    w = wallet or config.resolve_deposit_wallet(pk) or onchain.signer_address(pk)
+    # Same no-guess invariant as send(): a bridge address keyed to the signer EOA mints
+    # pUSD to the EOA — money the account never sees. Authoritative wallet or fail.
+    w = wallet or config.resolve_deposit_wallet(pk)
+    if not w:
+        emit(ctx.obj.output, {"ok": False, "reason": "no_deposit_wallet",
+                              "message": ("could not resolve the Polymarket account wallet — refusing to "
+                                          "mint a deposit address keyed to a guessed wallet. Retry, or "
+                                          "pass --wallet with the known account address.")})
+        raise typer.Exit(1)
     emit(ctx.obj.output, {"polymarket_wallet": w, "deposit_addresses": bridge_api.deposit_addresses(w)})
 
 
@@ -264,18 +272,40 @@ def send(
                                   "message": f"have {Decimal(have)/(Decimal(10)**dec)} {token}, need {amount}"})
             raise typer.Exit(1)
 
-    min_usd = bridge_api.min_deposit_usd(chain)
-    if min_usd is not None and amount < min_usd:
-        emit(ctx.obj.output, {"ok": False, "reason": "below_minimum",
-                              "message": f"{chain} minimum deposit is ${min_usd}; {amount} would sit pending"})
-        raise typer.Exit(1)
+    # pUSD is already the exchange collateral (post the 2026-04-28 upgrade): the account
+    # balance IS the api_wallet's pUSD balanceOf. It never goes through the bridge — the
+    # bridge's job is wrapping OTHER assets into pUSD — so a pUSD "deposit" is a plain
+    # ERC-20 transfer straight to the resolved api_wallet, with no bridge minimum.
+    is_pusd = chain == "polygon" and token.upper() == "PUSD"
 
-    w = wallet or config.resolve_deposit_wallet(pk) or signer
-    dep = bridge_api.deposit_addresses(w)
-    to_addr = dep.get("evm")
-    if not to_addr:
-        emit(ctx.obj.output, {"ok": False, "reason": "no_evm_address", "message": f"bridge returned no evm address: {dep}"})
+    if not is_pusd:
+        min_usd = bridge_api.min_deposit_usd(chain)
+        if min_usd is not None and amount < min_usd:
+            emit(ctx.obj.output, {"ok": False, "reason": "below_minimum",
+                                  "message": f"{chain} minimum deposit is ${min_usd}; {amount} would sit pending"})
+            raise typer.Exit(1)
+
+    # NEVER fall back to the signer EOA here. The bridge credits whatever address we
+    # name as the Polymarket wallet — hand it the EOA (a transient profile-lookup
+    # failure used to do exactly that) and it MINTS pUSD to the EOA instead of the
+    # trading account: funds "arrive" but every balance read shows 0. Same invariant
+    # as build_secure_client: authoritative address or fail loudly.
+    w = wallet or config.resolve_deposit_wallet(pk)
+    if not w:
+        emit(ctx.obj.output, {"ok": False, "reason": "no_deposit_wallet",
+                              "message": ("could not resolve the Polymarket account wallet (profile "
+                                          "lookup failed or the signer never signed in at "
+                                          "polymarket.com). Refusing to bridge to a guessed address — "
+                                          "retry, or pass --wallet with the known account address.")})
         raise typer.Exit(1)
+    if is_pusd:
+        to_addr = w
+    else:
+        dep = bridge_api.deposit_addresses(w)
+        to_addr = dep.get("evm")
+        if not to_addr:
+            emit(ctx.obj.output, {"ok": False, "reason": "no_evm_address", "message": f"bridge returned no evm address: {dep}"})
+            raise typer.Exit(1)
 
     plan = {"chain": chain, "token": token.upper(), "amount": amount, "to": to_addr,
             "polymarket_wallet": w, "gas_native": f"{gas.cost_native:.6f} {cfg['native']}"}
@@ -286,7 +316,8 @@ def send(
 
     tx_hash = onchain.send_transfer(chain, pk, to_addr, token_addr=token_addr, amount_base_units=units)
     emit(ctx.obj.output, {"ok": True, "submitted": True, "tx_hash": tx_hash, "plan": plan,
-                          "next": f"poll: poly deposit status {to_addr}"})
+                          "next": ("check: poly clob balance --asset-type collateral" if is_pusd
+                                   else f"poll: poly deposit status {to_addr}")})
 
 
 @app.command(name="gasless")

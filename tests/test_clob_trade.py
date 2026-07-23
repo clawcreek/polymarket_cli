@@ -149,3 +149,7 @@ def test_balance_note_matches_the_resolution_model():
     # a surprising zero.
     assert "profile lookup" in note or "wallet_address" in note
     assert "pending" in note
+    # Post the 2026-04 exchange upgrade the balance is pUSD, and the triage for a
+    # "funded but reads 0" account is deposit scan (funds may sit as pUSD on the EOA).
+    assert "pusd" in note
+    assert "deposit scan" in note
