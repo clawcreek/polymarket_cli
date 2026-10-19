@@ -76,20 +76,34 @@ def sell(ctx: typer.Context,
                  size=size, price=price, market=market, max_spend=max_spend, dry_run=dry_run, yes=yes)
 
 
-def main() -> int:
+def _click_error_types() -> tuple[tuple[type[BaseException], ...], type[Exception]]:
+    """(abort types, ClickException) for whichever click this typer runs on.
+
+    typer<0.27 runs on the real ``click`` package; typer>=0.27 vendors it as
+    ``typer._click`` and moves ``Abort`` to ``typer.exceptions``. The sandbox
+    installs this CLI unpinned, so both layouts must work — a missing attribute
+    here turns every clean error message into a traceback.
+    """
     try:
-        import click as _click_mod
+        import click as click_mod
     except ModuleNotFoundError:
-        from typer import _click as _click_mod  # type: ignore[no-redef]
+        from typer import _click as click_mod  # type: ignore[no-redef]
+    aborts = {getattr(click_mod.exceptions, "Abort", None), getattr(typer, "Abort", None)}
+    abort_types = tuple(t for t in aborts if isinstance(t, type)) + (KeyboardInterrupt,)
+    return abort_types, click_mod.exceptions.ClickException
+
+
+def main() -> int:
     from polymarket import PolymarketError
     from .output import print_error
+    abort_types, click_exception = _click_error_types()
     try:
         app(standalone_mode=False)
         return 0
-    except (_click_mod.exceptions.Abort, KeyboardInterrupt):
+    except abort_types:
         print_error(_OUTPUT["fmt"], "aborted")
         return 1
-    except _click_mod.exceptions.ClickException as exc:  # usage errors
+    except click_exception as exc:  # usage errors
         exc.show()
         return exc.exit_code
     except SystemExit as exc:
